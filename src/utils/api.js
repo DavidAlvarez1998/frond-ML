@@ -1,7 +1,7 @@
 const BASE = import.meta.env.VITE_API_URL ?? '';
 
 /**
- * Unified request wrapper with 15s timeout, 1× retry on 5xx, AbortSignal support.
+ * Unified request wrapper with 60s timeout, 1× retry on 5xx, AbortSignal support.
  * @param {string} path — API path (e.g. '/predict')
  * @param {object} options
  * @param {string} [options.method='GET']
@@ -12,7 +12,7 @@ const BASE = import.meta.env.VITE_API_URL ?? '';
 async function request(path, { method = 'GET', body, signal, formData } = {}) {
   const exec = async (attempt) => {
     // Combine timeout with any external signal
-    const timeoutSignal = AbortSignal.timeout(15000);
+    const timeoutSignal = AbortSignal.timeout(60000);
     const combinedSignal = signal
       ? (AbortSignal.any
         ? AbortSignal.any([timeoutSignal, signal])
