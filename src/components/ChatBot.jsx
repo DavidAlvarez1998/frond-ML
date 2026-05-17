@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, Loader2, Bot } from 'lucide-react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api } from '../utils/api';
 
 const WELCOME = {
@@ -17,13 +19,45 @@ function Message({ msg }) {
         </div>
       )}
       <div
-        className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+        className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed markdown-content ${
           isUser
             ? 'bg-blue-600 text-white rounded-tr-sm'
             : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-sm'
         }`}
       >
-        {msg.content}
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            a: ({ href, children }) => (
+              <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline hover:text-blue-300">
+                {children}
+              </a>
+            ),
+            code: ({ className, children, ...props }) => {
+              const isInline = !className;
+              if (isInline) {
+                return (
+                  <code className="bg-slate-700 text-emerald-300 px-1 py-0.5 rounded text-xs font-mono">
+                    {children}
+                  </code>
+                );
+              }
+              return (
+                <pre className="bg-slate-900 border border-slate-600 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono leading-relaxed">
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                </pre>
+              );
+            },
+            p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+            ul: ({ children }) => <ul className="list-disc list-inside space-y-1 my-1">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 my-1">{children}</ol>,
+            strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+          }}
+        >
+          {msg.content}
+        </Markdown>
       </div>
     </div>
   );

@@ -6,7 +6,9 @@ import DatasetSection from './components/DatasetSection';
 import FeaturesSection from './components/FeaturesSection';
 import ModelosSection from './components/ModelosSection';
 import BacktestSection from './components/BacktestSection';
-import BacktestInteractivo from './components/BacktestInteractivo';
+import BacktestRunner from './components/BacktestRunner';
+import ComparadorSection from './components/ComparadorSection';
+import SignalsSection from './components/SignalsSection';
 import SimuladorSection from './components/SimuladorSection';
 import InformeSection from './components/InformeSection';
 import Footer from './components/Footer';
@@ -22,9 +24,11 @@ export default function App() {
         <DatasetSection />
         <FeaturesSection />
         <ModelosSection />
-        <BacktestSection />
-        <BacktestInteractivo />
         <SimuladorSection />
+        <BacktestSection />
+        <BacktestRunner />
+        <ComparadorSection />
+        <SignalsSection />
         <InformeSection />
       </main>
       <Footer />

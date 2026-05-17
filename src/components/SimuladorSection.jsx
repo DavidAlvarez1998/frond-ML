@@ -1,11 +1,28 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Cpu, AlertTriangle, CheckCircle2, HelpCircle, Loader2, Wifi, WifiOff } from 'lucide-react';
+import { Tooltip } from 'react-tooltip';
 import { api } from '../utils/api';
 
-function Slider({ label, min, max, step, value, onChange, format }) {
+// ── Tooltip content per indicator ────────────────────────────────────────────────
+const TOOLTIPS = {
+  distEma20:  'Distancia porcentual del precio respecto a la EMA de 20 períodos. Si < -0.3%, el precio está por debajo de la EMA rápida — posible sobreventa.',
+  rsi:        'RSI (Relative Strength Index) a 14 períodos. < 40 indica sobreventa moderada, una de las 4 condiciones del flag precio_en_descuento.',
+  bbPos:      'Posición del precio dentro de las Bandas de Bollinger (0 = borde inferior, 1 = borde superior). < 0.25 = precio cerca del soporte.',
+  caida5:     'Rendimiento acumulado de las últimas 5 velas. < -0.4% sugiere presión vendedora reciente — otra condición de descuento.',
+  distEma50:  'Distancia a EMA 50. Filtro final de señal: el precio debe estar como máximo 0.15% por debajo para confirmar la entrada.',
+  distEma200: 'Distancia a EMA 200. Contexto de tendencia de largo plazo — útil para evitar comprar en tendencia bajista fuerte.',
+  macd:       'Línea MACD (Moving Average Convergence Divergence). Cruces positivos y divergencias alcistas refuerzan la señal.',
+  volRel:     'Volumen relativo al promedio de 20 períodos. > 1.0 confirma que el movimiento tiene respaldo de volumen.',
+};
+
+function Slider({ label, min, max, step, value, onChange, format, tooltipId }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-slate-300 text-sm font-medium">
+      <label
+        className="text-slate-300 text-sm font-medium cursor-help"
+        data-tooltip-id={`tt-${tooltipId}`}
+        data-tooltip-content={TOOLTIPS[tooltipId]}
+      >
         {label}: <span className="text-white font-bold">{format ? format(value) : value}</span>
       </label>
       <input
@@ -35,31 +52,64 @@ export default function SimuladorSection() {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
 
-  const handlePredict = useCallback(async () => {
+  // Refs for debounce + request cancellation
+  const debounceRef = useRef(null);
+  const abortRef    = useRef(null);
+
+  const buildPayload = useCallback(() => ({
+    dist_ema20:   distEma20,
+    dist_ema50:   distEma50,
+    dist_ema200:  distEma200,
+    rsi_14:       rsi,
+    bb_posicion:  bbPos,
+    caida_5:      caida5,
+    caida_10:     caida5 * 1.8,
+    macd:         macd,
+    macd_signal:  0,
+    vol_relativo: volRel,
+  }), [distEma20, distEma50, distEma200, rsi, bbPos, caida5, macd, volRel]);
+
+  const doPredict = useCallback(async (signal) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.predict({
-        dist_ema20:   distEma20,
-        dist_ema50:   distEma50,
-        dist_ema200:  distEma200,
-        rsi_14:       rsi,
-        bb_posicion:  bbPos,
-        caida_5:      caida5,
-        caida_10:     caida5 * 1.8,
-        macd:         macd,
-        macd_signal:  0,
-        vol_relativo: volRel,
-      });
+      const data = await api.predict(buildPayload(), signal);
       setResult(data);
     } catch (e) {
+      if (e.name === 'AbortError') return;
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [distEma20, distEma50, distEma200, rsi, bbPos, caida5, macd, volRel]);
+  }, [buildPayload]);
 
-  // Fallback local si la API no está disponible
+  // ── Auto-predict with 300ms debounce + AbortController ───────────────────────
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    debounceRef.current = setTimeout(() => {
+      // Cancel any in-flight request
+      if (abortRef.current) abortRef.current.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      doPredict(controller.signal);
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [distEma20, distEma50, distEma200, rsi, bbPos, caida5, macd, volRel, doPredict]);
+
+  // ── Manual button: also uses abortRef + clears debounce ───────────────────────
+  const handlePredict = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    doPredict(controller.signal);
+  }, [doPredict]);
+
+  // ── Local fallback ────────────────────────────────────────────────────────────
   const precioEnDescuento = distEma20 < -0.003 || rsi < 40 || bbPos < 0.25 || caida5 < -0.004;
   const senalLocal        = precioEnDescuento && distEma50 < -0.0015;
 
@@ -89,6 +139,7 @@ export default function SimuladorSection() {
           <h2 className="text-4xl font-extrabold text-white mt-2 mb-4">Predicción con el modelo real</h2>
           <p className="text-slate-400 text-lg max-w-2xl">
             Ajustá los indicadores y consultá al modelo Random Forest entrenado via API.
+            Los cambios en sliders disparan la predicción automáticamente.
           </p>
 
           {/* API status badge */}
@@ -98,7 +149,7 @@ export default function SimuladorSection() {
               : 'bg-slate-800 border-slate-700 text-slate-400'
           }`}>
             {apiActive ? <Wifi size={12} /> : <WifiOff size={12} />}
-            {apiActive ? 'API conectada — modelo real activo' : 'Presioná "Consultar modelo" para conectar la API'}
+            {apiActive ? 'API conectada — auto-predicción activa' : 'Mové los sliders para consultar el modelo automáticamente'}
           </div>
         </div>
 
@@ -107,18 +158,18 @@ export default function SimuladorSection() {
           <div className="card-dark rounded-2xl p-6 flex flex-col gap-5">
             <h3 className="text-white font-bold text-lg">Indicadores técnicos</h3>
 
-            <Slider label="Distancia a EMA20"  min={-0.02} max={0.02} step={0.001} value={distEma20}  onChange={setDistEma20}  format={v => `${(v*100).toFixed(1)}%`} />
-            <Slider label="RSI (14 períodos)"   min={10}    max={80}   step={1}     value={rsi}        onChange={setRsi}        format={v => v.toFixed(0)} />
-            <Slider label="Posición Bollinger"  min={0}     max={1}    step={0.01}  value={bbPos}      onChange={setBbPos}      format={v => v.toFixed(2)} />
-            <Slider label="Caída 5 velas"        min={-0.02} max={0.02} step={0.001} value={caida5}     onChange={setCaida5}     format={v => `${(v*100).toFixed(1)}%`} />
+            <Slider label="Distancia a EMA20"  min={-0.02} max={0.02} step={0.001} value={distEma20}  onChange={setDistEma20}  format={v => `${(v*100).toFixed(1)}%`} tooltipId="distEma20" />
+            <Slider label="RSI (14 períodos)"   min={10}    max={80}   step={1}     value={rsi}        onChange={setRsi}        format={v => v.toFixed(0)} tooltipId="rsi" />
+            <Slider label="Posición Bollinger"  min={0}     max={1}    step={0.01}  value={bbPos}      onChange={setBbPos}      format={v => v.toFixed(2)} tooltipId="bbPos" />
+            <Slider label="Caída 5 velas"        min={-0.02} max={0.02} step={0.001} value={caida5}     onChange={setCaida5}     format={v => `${(v*100).toFixed(1)}%`} tooltipId="caida5" />
 
             <div className="border-t border-slate-800 pt-4 flex flex-col gap-5">
               <p className="text-slate-500 text-xs flex items-center gap-1.5">
                 <HelpCircle size={12} /> Filtros adicionales
               </p>
-              <Slider label="Distancia a EMA50"  min={-0.02} max={0.01} step={0.001} value={distEma50}  onChange={setDistEma50}  format={v => `${(v*100).toFixed(1)}%`} />
-              <Slider label="Distancia a EMA200" min={-0.02} max={0.01} step={0.001} value={distEma200} onChange={setDistEma200} format={v => `${(v*100).toFixed(1)}%`} />
-              <Slider label="Volumen relativo"    min={0.1}   max={5}    step={0.1}   value={volRel}     onChange={setVolRel}     format={v => `${v.toFixed(1)}x`} />
+              <Slider label="Distancia a EMA50"  min={-0.02} max={0.01} step={0.001} value={distEma50}  onChange={setDistEma50}  format={v => `${(v*100).toFixed(1)}%`} tooltipId="distEma50" />
+              <Slider label="Distancia a EMA200" min={-0.02} max={0.01} step={0.001} value={distEma200} onChange={setDistEma200} format={v => `${(v*100).toFixed(1)}%`} tooltipId="distEma200" />
+              <Slider label="Volumen relativo"    min={0.1}   max={5}    step={0.1}   value={volRel}     onChange={setVolRel}     format={v => `${v.toFixed(1)}x`} tooltipId="volRel" />
             </div>
 
             <button
@@ -216,13 +267,55 @@ export default function SimuladorSection() {
               <div className="flex items-start gap-2.5 p-4 bg-slate-900 rounded-xl border border-slate-800">
                 <AlertTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
                 <p className="text-slate-500 text-xs leading-relaxed">
-                  El semáforo usa lógica local. Para la <strong className="text-slate-400">probabilidad real del modelo Random Forest</strong>, presioná "Consultar modelo" (requiere servidor FastAPI en localhost:8000).
+                  El semáforo usa lógica local. Para la <strong className="text-slate-400">probabilidad real del modelo Random Forest</strong>, mové los sliders o presioná "Consultar modelo" (requiere servidor FastAPI en localhost:8000).
                 </p>
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* React Tooltip — shared instance for all sliders */}
+      <Tooltip
+        id="tt-distEma20"
+        place="top"
+        className="!max-w-xs !text-xs !leading-relaxed !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2"
+      />
+      <Tooltip
+        id="tt-rsi"
+        place="top"
+        className="!max-w-xs !text-xs !leading-relaxed !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2"
+      />
+      <Tooltip
+        id="tt-bbPos"
+        place="top"
+        className="!max-w-xs !text-xs !leading-relaxed !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2"
+      />
+      <Tooltip
+        id="tt-caida5"
+        place="top"
+        className="!max-w-xs !text-xs !leading-relaxed !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2"
+      />
+      <Tooltip
+        id="tt-distEma50"
+        place="top"
+        className="!max-w-xs !text-xs !leading-relaxed !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2"
+      />
+      <Tooltip
+        id="tt-distEma200"
+        place="top"
+        className="!max-w-xs !text-xs !leading-relaxed !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2"
+      />
+      <Tooltip
+        id="tt-macd"
+        place="top"
+        className="!max-w-xs !text-xs !leading-relaxed !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2"
+      />
+      <Tooltip
+        id="tt-volRel"
+        place="top"
+        className="!max-w-xs !text-xs !leading-relaxed !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2"
+      />
     </section>
   );
 }
